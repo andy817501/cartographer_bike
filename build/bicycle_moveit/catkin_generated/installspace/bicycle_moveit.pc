@@ -1,0 +1,8 @@
+prefix=/home/prowinter/Desktop/Bicycle_ws/install
+
+Name: bicycle_moveit
+Description: Description of bicycle_moveit
+Version: 0.3.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

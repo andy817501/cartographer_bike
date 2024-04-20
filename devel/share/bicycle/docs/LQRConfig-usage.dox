@@ -1,0 +1,14 @@
+\subsubsection usage Usage
+\verbatim
+<node name="dynamic_LQR" pkg="bicycle" type="dynamic_LQR">
+  <param name="Switch" type="bool" value="False" />
+  <param name="Speed_Kp" type="double" value="3.54" />
+  <param name="Speed_Ki" type="double" value="1.34" />
+  <param name="Speed_Kd" type="double" value="0.02" />
+  <param name="Speed_ki_max" type="double" value="3.0" />
+  <param name="Angle_Kp" type="double" value="2.68" />
+  <param name="Angle_Vel_Kp" type="double" value="5.4" />
+  <param name="Angle_Vel_Kd" type="double" value="2.356" />
+</node>
+\endverbatim
+

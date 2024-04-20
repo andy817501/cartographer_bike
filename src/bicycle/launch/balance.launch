@@ -1,0 +1,43 @@
+<launch>
+  <node name="bicycle_can_communication" pkg="can_communication" type="Service.py" />
+  <node name="bicycle_balance" pkg="bicycle" type="bicycle_balance" />
+  <node pkg="rqt_plot" type="rqt_plot" name="roll_plot" args="/bicycle/fdi/imu/Roll">   
+    <param name="geometry" value="600x400" />
+  </node>
+  <node pkg="rqt_plot" type="rqt_plot" name="torque_plot" args="/bicycle/fdi/imu/Set_Torque">   
+    <param name="geometry" value="600x400" />
+  </node>
+  <node pkg="rqt_plot" type="rqt_plot" name="rpm_plot" args="/Bicycle/Odrive_Motor_info/Motor_rpm">
+      <param name="geometry" value="600x400" />
+  </node>
+
+  <!-- <node pkg="rqt_plot" type="rqt_plot" name="current_plot" args="/Bicycle/Odrive_Motor_info/Motor_current">
+      <param name="geometry" value="600x400" />
+  </node> -->
+  <!-- <node pkg="rqt_plot" type="rqt_plot" name="rpm_plot" args="/ros_odrive/odrive_msg_355E30753533/vel0">
+      <param name="geometry" value="600x400" />
+  </node> -->
+  <!-- <node pkg="rqt_plot" type="rqt_plot" name="roll_gyro_plot" args="/bicycle/fdi/imu/Roll_Velocitys">
+      <param name="geometry" value="600x400" />
+  </node> -->
+  <node pkg="fdilink_ahrs" name="ahrs_driver" type="ahrs_driver" output="screen" >
+    <param name="debug"  value="false"/>
+    <param name="port"  value="/dev/fdi_imu"/>
+    <param name="baud"  value="921600"/>
+    <param name="imu_topic"  value="/fdi_imu"/>
+    <param name="imu_frame"  value="imu_link"/>
+    <param name="device_type"  value="1"/> <!-- 0: origin_data, 1: for single imu or ucar in ROS, 2:for Xiao in ROS -->
+  </node>
+
+  <node name="rqt" pkg="rqt_gui" type="rqt_gui" args="--perspective-file /home/prowinter/Desktop/Bicycle_ws/dynamic_reconfigure.perspective" output="screen">
+  </node>
+  <!-- <node pkg="dynamic_reconfigure" type="dynamic_reconfigure" name="my_node">
+    <param name="config" type="string" value="DynamicLQR.cfg" />
+  </node> -->
+  
+  <!-- 手柄控制 -->
+  <!-- <node name="Gamepad_Control" pkg="rosserial_arduino" type="serial_node.py">
+      <param name="port" value="/dev/ttyACM2" />
+  </node> -->
+
+</launch>

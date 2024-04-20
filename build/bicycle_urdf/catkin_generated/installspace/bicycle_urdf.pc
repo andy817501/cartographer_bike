@@ -1,0 +1,8 @@
+prefix=/home/prowinter/Desktop/Bicycle_ws/install
+
+Name: bicycle_urdf
+Description: Description of bicycle_urdf
+Version: 1.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

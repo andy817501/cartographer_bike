@@ -1,0 +1,8 @@
+prefix=/home/prowinter/Desktop/Bicycle_ws/install
+
+Name: bicycle
+Description: Description of bicycle
+Version: 0.0.0
+Cflags: -I${prefix}/include
+Libs: -L${prefix}/lib 
+Requires: 

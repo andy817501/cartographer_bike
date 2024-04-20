@@ -1,0 +1,2 @@
+bicycle:bicycle_moveit:bicycle_urdf:can_communication:fdilink_ahrs:ros_odrive:rplidar_ros
+-DCATKIN_DEVEL_PREFIX=/home/prowinter/Desktop/Bicycle_ws/devel -DCMAKE_INSTALL_PREFIX=/home/prowinter/Desktop/Bicycle_ws/install -G Unix Makefiles

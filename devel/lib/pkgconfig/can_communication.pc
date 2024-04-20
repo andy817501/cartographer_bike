@@ -1,0 +1,8 @@
+prefix=/home/prowinter/Desktop/Bicycle_ws/devel
+
+Name: can_communication
+Description: Description of can_communication
+Version: 0.0.0
+Cflags: -I/home/prowinter/Desktop/Bicycle_ws/devel/include
+Libs: -L${prefix}/lib 
+Requires: 

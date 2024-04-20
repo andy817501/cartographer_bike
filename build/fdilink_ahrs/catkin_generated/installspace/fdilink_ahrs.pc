@@ -1,0 +1,8 @@
+prefix=/home/prowinter/Desktop/Bicycle_ws/install
+
+Name: fdilink_ahrs
+Description: Description of fdilink_ahrs
+Version: 0.0.1
+Cflags: -I${prefix}/include
+Libs: -L${prefix}/lib 
+Requires: 

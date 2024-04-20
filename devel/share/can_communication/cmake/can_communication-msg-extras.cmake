@@ -1,0 +1,2 @@
+set(can_communication_MESSAGE_FILES "/home/prowinter/Desktop/Bicycle_ws/src/can_communication/msg/Bicycle_msg.msg;/home/prowinter/Desktop/Bicycle_ws/src/can_communication/msg/Odrive_msg.msg")
+set(can_communication_SERVICE_FILES "/home/prowinter/Desktop/Bicycle_ws/src/can_communication/srv/CAN_srv.srv;/home/prowinter/Desktop/Bicycle_ws/src/can_communication/srv/VESC_srv.srv;/home/prowinter/Desktop/Bicycle_ws/src/can_communication/srv/Odrive_srv.srv")

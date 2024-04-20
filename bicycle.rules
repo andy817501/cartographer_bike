@@ -1,0 +1,3 @@
+KERNEL=="ttyACM*", ATTRS{idVendor}=="ad50", ATTRS{idProduct}=="60c4",MODE:="0777", SYMLINK+="usb_canable"
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60",MODE:="0777", SYMLINK+="fdi_imu"
+KERNEL=="ttyACM*", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0d32",MODE:="0777", SYMLINK+="odrive"

@@ -1,0 +1,428 @@
+#include <ros/ros.h>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <ros/console.h>
+#include <angles/angles.h>
+#include "sensor_msgs/Imu.h"
+#include <can_communication/CAN_srv.h>
+#include <can_communication/VESC_srv.h>
+#include <can_communication/Odrive_srv.h>
+#include <can_communication/Odrive_msg.h>
+#include <can_communication/Bicycle_msg.h>
+#include <dynamic_reconfigure/server.h>
+#include <bicycle/LQRConfig.h>
+#include <std_msgs/Float32.h>
+#include <ros_odrive/odrive_ctrl.h>
+#include <bicycle/Bicycle_Roll.h>
+#include <bicycle/Gamepad_Control.h>
+
+#include <pthread.h>
+
+#define Time_Sec 0.03f
+
+// #define _DEBUG_IMU 1
+// #define _DEBUG_Dynamic_LQR 1
+
+// #define Odrive_USE_USB_Control 1
+#define Odrive_USE_CAN_Control 1
+// #define VESC_USE_CAN_Control 1
+
+#define CAN_ID 0x0E
+#define VESC_ID_1 0x68
+#define VESC_ID_2 0x69
+
+#define Axis0_Set_Input_Vel 0x0D
+#define Axis0_Set_Input_Torque 0x0e
+
+#define Angle_Offset 0.34f; //机械中值为正加，为负减小此值
+
+float Motor_Set_Rpm;
+
+pthread_mutex_t dyn_mutex;
+pthread_mutex_t imu_mutex;
+pthread_mutex_t motor_mutex;
+
+enum commands {
+    CMD_AXIS_RESET,
+    CMD_AXIS_IDLE,
+    CMD_AXIS_CLOSED_LOOP,
+    CMD_AXIS_SET_VELOCITY,
+    CMD_AXIS_SET_VELOCITY_DUAL,
+    CMD_REBOOT
+};
+
+struct BikeStructure{             // Structure declaration
+  double LQR_Kp=0.0f;
+  double LQR_Kv=0.0f;
+  double LQR_Ks=0.0f;
+
+  double PID_Kp=0.0f;
+  double PID_Ki=0.0f;
+  double PID_Kd=0.0f;
+
+  double Speed_Kp=0.0f;
+  double Speed_Ki=0.0f;
+  double Speed_Kd=0.0f;
+
+  double Angle_Kp=0.0f;
+  double Angle_Ki=0.0f;
+  double Angle_Kd=0.0f;
+
+  double Angle_Vel_Kp=0.0f;
+  double Angle_Vel_Ki=0.0f;
+  double Angle_Vel_Kd=0.0f;
+
+  double Angle_Offsett = 0.0f;
+
+  float Servo_Direction_Angle;
+  float Drive_Motor_duty;
+  float Balance_Motor_rpm;
+  float Bicycle_voltage;
+  double Roll_Angular_Velocity = 0.0f;
+  double Roll;
+  double Roll_Gyro;
+  bool Switch;
+} Ebike;     // Structure variable
+
+float Speed_PID_loop(float Target,float Measurements);
+float Angle_PID_loop(float Target,float Measurements);
+float Angle_Vel_PID_loop(float Target,float Measurements);
+
+ros::ServiceClient CAN_Servo_Client;
+ros::ServiceClient VESC_Motor_1_Client;
+ros::ServiceClient VESC_Motor_2_Client;
+ros::ServiceClient Odrive_Motor_Client;
+ros::Publisher IMU_ROLL_Pbu;
+ros::Publisher Odrive_pub;
+ros::Publisher Roll_pub;
+ros::Publisher Roll_Velocity_pub;
+ros::Timer timer;
+
+void Gamepad_Control_callback(const bicycle::Gamepad_Control &data){
+  if(data.LeftHatY > 16384){
+    // 前进
+    can_communication::VESC_srv srv;
+    // if(Ebike.Switch){
+    //   srv.request.Motor_duty = 0.01;
+    // }else{
+    //   srv.request.Motor_duty = 0;
+    // }
+    srv.request.Motor_duty = 0.01;
+    if(!VESC_Motor_2_Client.call(srv)){
+      ROS_ERROR("Failed to call service VESC_Motor_2_Client");
+    }
+  }else if(data.LeftHatY < -16384){
+    // 后退
+    can_communication::VESC_srv srv;
+    if(Ebike.Switch){
+      srv.request.Motor_duty = -0.01;
+    }else{
+      srv.request.Motor_duty = 0;
+    }
+    if(!VESC_Motor_2_Client.call(srv)){
+      ROS_ERROR("Failed to call service VESC_Motor_2_Client");
+    }
+  }else{
+    // 停止
+    can_communication::VESC_srv srv;
+    srv.request.Motor_duty = 0;
+    if(!VESC_Motor_2_Client.call(srv)){
+      ROS_ERROR("Failed to call service VESC_Motor_2_Client");
+    }
+  }
+
+  // if(data.LeftHatX > 16384){
+  //   // 左转
+  // }else if(data.LeftHatX < -16384){
+  //   // 右转
+  // }else{
+  //   // 停止
+  // }
+
+}
+
+void callback(bicycle::LQRConfig &config, uint32_t level) {
+  pthread_mutex_lock(&dyn_mutex);
+  Ebike.Switch = config.Switch;
+
+  Ebike.Speed_Kp = config.Speed_Kp;
+
+  Ebike.Angle_Kp = config.Angle_Kp;
+  Ebike.Angle_Kd = config.Angle_Kd;
+
+  Ebike.Angle_Vel_Kp = config.Angle_Vel_Kp;
+  Ebike.Angle_Vel_Ki = config.Angle_Vel_Ki;
+
+  // Ebike.LQR_Kp = config.LQR_Kp;
+  // Ebike.LQR_Kv = config.LQR_Kv;
+  // Ebike.LQR_Ks = config.LQR_Ks;
+  pthread_mutex_unlock(&dyn_mutex);
+}
+
+void timerCallback(const ros::TimerEvent& event)
+{
+  static int i=0,j=0;
+  static float Motor_Speed = 0,Angular_Velocity=0;
+  static float Last_Motor_Set_Rpm = 0.0f;
+  // 速度环
+  if(1){
+    Motor_Speed = Speed_PID_loop(0,Ebike.Balance_Motor_rpm);
+    i = 0;
+  }
+  // 角度环
+  pthread_mutex_lock(&imu_mutex);
+  if(1){
+    Angular_Velocity = Angle_PID_loop(Motor_Speed,Ebike.Roll);
+    j=0;
+    i++;
+  }
+  j++;
+  // Motor_Set_Rpm = Angular_Velocity; 
+  // 角速度环
+  
+  // Motor_Set_Rpm = Angle_Vel_PID_loop(Angular_Velocity,Ebike.Roll_Angular_Velocity);
+  if(0){
+    Angle_Vel_PID_loop(Angular_Velocity,Ebike.Roll_Angular_Velocity);
+    Motor_Set_Rpm = Last_Motor_Set_Rpm;
+  }else{
+    Motor_Set_Rpm = Angle_Vel_PID_loop(Angular_Velocity,Ebike.Roll_Angular_Velocity);
+  }
+  
+  ROS_WARN("Motor_Set_Rpm=%f\t Ebike.Roll=%f\t ",Motor_Set_Rpm,Ebike.Roll);
+  pthread_mutex_unlock(&imu_mutex);
+  Last_Motor_Set_Rpm = Motor_Set_Rpm;
+  // LQR控制
+  //Motor_Set_Rpm = (Ebike.Roll * Ebike.LQR_Kp + Ebike.Roll_Angular_Velocity * Ebike.LQR_Kv  + Ebike.Balance_Motor_rpm * Ebike.LQR_Ks);
+  
+  //Motor_Set_Rpm = 0.3 * Motor_Set_Rpm_set + 0.7 * Motor_Set_Rpm;
+
+  // 输出限幅
+  if(Motor_Set_Rpm > 5 ) Motor_Set_Rpm =  5;
+  if(Motor_Set_Rpm < -5) Motor_Set_Rpm = -5;
+
+  // if(Motor_Set_Rpm>0 && Motor_Set_Rpm<0.3) Motor_Set_Rpm = 0.3;
+  // if(Motor_Set_Rpm<0 && Motor_Set_Rpm>-0.3) Motor_Set_Rpm = -0.3;
+
+  #ifdef Odrive_USE_USB_Control
+  if(Ebike.Switch){
+    ros_odrive::odrive_ctrl msgg;
+    msgg.command = CMD_AXIS_SET_VELOCITY;
+    msgg.axis = 0;
+    msgg.fval = Motor_Set_Rpm;
+    Odrive_pub.publish(msgg);
+  }else{
+    ros_odrive::odrive_ctrl msgg;
+    msgg.command = CMD_AXIS_SET_VELOCITY;
+    msgg.axis = 0;
+    msgg.fval = 0;
+    Odrive_pub.publish(msgg);
+  }
+  #endif
+  #ifdef Odrive_USE_CAN_Control
+  if(Ebike.Switch){
+    can_communication::Odrive_srv srv;
+    // srv.request.Command = Axis0_Set_Input_Vel;
+    // srv.request.Motor_vel = Motor_Set_Rpm;
+
+    srv.request.Command = Axis0_Set_Input_Torque;
+    srv.request.Motor_tor = Motor_Set_Rpm;
+    if(!Odrive_Motor_Client.call(srv)) ROS_ERROR("Failed to call service Odrive_Motor_Client");
+  }else
+  {
+    can_communication::Odrive_srv srv;
+    // srv.request.Command = Axis0_Set_Input_Vel;
+    // srv.request.Motor_vel = 0;
+
+    srv.request.Command = Axis0_Set_Input_Torque;
+    srv.request.Motor_tor = 0;
+    if(!Odrive_Motor_Client.call(srv)) ROS_ERROR("Failed to call service Odrive_Motor_Client");
+  }
+  #endif
+  #ifdef VESC_USE_CAN_Control
+    can_communication::VESC_srv srv;
+    if(Ebike.Switch){
+      srv.request.Motor_rpm = - Motor_Set_Rpm;
+    }else{
+      srv.request.Motor_rpm = 0;
+    }
+    if(!VESC_Motor_1_Client.call(srv)){
+      ROS_ERROR("Failed to call service VESC_Motor_1_Client");
+    }
+  #endif
+
+}
+
+void CAN_Callback(const can_communication::Bicycle_msg& msg){
+  if(msg.Device_ID == CAN_ID){
+    Ebike.Servo_Direction_Angle = msg.Servo_Direction;
+    ROS_WARN("Servo_Direction_Angle:%f",Ebike.Servo_Direction_Angle);
+  }
+}
+
+void Motor_1_Callback(const can_communication::Bicycle_msg& msg){
+  static char time_flag = 1;
+  double Temp_Roll_Gyro ;
+  if(msg.Device_ID == VESC_ID_1){
+    // Ebike.Balance_Motor_rpm = msg.Motor_rpm;
+    // Ebike.Bicycle_voltage = msg.Bicycle_voltage;
+    // Ebike.Roll = msg.Motor_Roll - Angle_Offset;
+    // Ebike.Roll_Angular_Velocity = msg.Motor_Roll_Gyro;
+  }
+  // if(time_flag){
+  //   time_flag = 0;
+  //   timer.start();
+  // }
+}
+
+void Motor_2_Callback(const can_communication::Bicycle_msg& msg){
+  if(msg.Device_ID == VESC_ID_2){
+    Ebike.Drive_Motor_duty = msg.Motor_duty;
+  }
+}
+
+void Odrive_Motor_Callback(const can_communication::Odrive_msg& msg){
+  static char time_flag = 1;
+  pthread_mutex_lock(&motor_mutex);
+  Ebike.Balance_Motor_rpm = msg.Motor_rpm;
+  Ebike.Bicycle_voltage   = msg.Motor_voltage;
+  pthread_mutex_unlock(&motor_mutex);
+
+  if(time_flag){
+    time_flag = 0;
+    timer.start();
+  }
+}
+
+void imuCallback(const sensor_msgs::ImuConstPtr& msg){
+  // static float Motor_Set_Rpm;
+  tf2::Quaternion q(
+      msg->orientation.x,
+      msg->orientation.y,
+      msg->orientation.z,
+      msg->orientation.w);
+  tf2::Matrix3x3 m(q);
+  double roll, pitch, yaw;
+  m.getRPY(pitch, roll, yaw);  //change direction
+  pthread_mutex_lock(&imu_mutex);
+  Ebike.Roll = angles::to_degrees(roll) - Angle_Offset;
+  Ebike.Roll_Angular_Velocity = msg->angular_velocity.y;
+  // Low filter
+  float Angular_Velocity = msg->angular_velocity.y;
+  Ebike.Roll_Angular_Velocity = 0.1 * Angular_Velocity + 0.9 * Ebike.Roll_Angular_Velocity;
+  pthread_mutex_unlock(&imu_mutex);
+  //if(Ebike.Roll > -0.05 && Ebike.Roll < 0.05) Ebike.Roll = 0;
+
+  #ifdef _DEBUG_IMU
+  ROS_WARN("roll:%.3f ,pitch:%.3f ,yaw:%.3f",angles::to_degrees(roll)-Angle_Offset,angles::to_degrees(pitch),angles::to_degrees(yaw));
+  #endif
+  bicycle::Bicycle_Roll roll_msg;
+  roll_msg.Roll = Ebike.Roll;
+  roll_msg.Roll_Velocitys = Ebike.Roll_Angular_Velocity;
+  roll_msg.Set_Torque = Motor_Set_Rpm;
+  Roll_pub.publish(roll_msg);
+  //ROS_WARN("Roll:%f,Roll_Angular_Velocity:%f ",roll_msg.Roll,roll_msg.Roll_Velocitys);
+}
+
+float Speed_PID_loop(float Target,float Measurements){
+  
+  pthread_mutex_lock(&dyn_mutex);
+  float out = Ebike.Speed_Kp * (Target - Measurements);
+  pthread_mutex_unlock(&dyn_mutex);
+  return  out;
+}
+
+float Angle_PID_loop(float Target,float Measurements){
+  float ep;
+  static float ei = 0.0f;
+  ep =  Target - Measurements;
+  ei += ep;
+  // 积分限幅
+  ei = ei < 10 ? ei > -10 ? ei : -10 : 10;
+  pthread_mutex_lock(&dyn_mutex);
+  float out = Ebike.Angle_Kp * ep + Ebike.Angle_Ki * ei + Ebike.Angle_Kd * Ebike.Roll_Angular_Velocity;
+  pthread_mutex_unlock(&dyn_mutex);
+
+  return  out;
+}
+
+float Angle_Vel_PID_loop(float Target,float Measurements){
+  static float Angle_Vel_thiserror=0.0f,Angle_Vel_lasterror=0.0f,Angle_Vel_preerror=0.0f;
+  static float Angle_Vel_ep=0.0f,Angle_Vel_ei=0.0f,Angle_Vel_ed=0.0f;
+  // if(Measurements>0 && Measurements<1.0f) Measurements = 0;
+  // if(Measurements<0 && Measurements>-1.0f) Measurements = 0;
+  Angle_Vel_thiserror = Measurements-Target;
+  Angle_Vel_ep=Angle_Vel_thiserror-Angle_Vel_lasterror;
+  Angle_Vel_ei=Angle_Vel_thiserror;
+  Angle_Vel_ed=Angle_Vel_thiserror-2*Angle_Vel_lasterror+Angle_Vel_preerror;
+  Angle_Vel_lasterror=Angle_Vel_thiserror;
+  Angle_Vel_preerror=Angle_Vel_lasterror;
+  pthread_mutex_lock(&dyn_mutex);
+  float out = Ebike.Angle_Vel_Kp * Angle_Vel_ep + Ebike.Angle_Vel_Ki * Angle_Vel_ei + Ebike.Angle_Vel_Kd * Angle_Vel_ed;
+  pthread_mutex_unlock(&dyn_mutex);
+  return out;
+}
+
+int main(int argc, char** argv){
+  pthread_mutex_init(&dyn_mutex, NULL);
+  pthread_mutex_init(&imu_mutex, NULL);
+  pthread_mutex_init(&motor_mutex, NULL);
+  ros::init(argc, argv, "bicycle_balance");
+
+
+  ros::NodeHandle roll_node;
+  Roll_pub = roll_node.advertise<bicycle::Bicycle_Roll>("/bicycle/fdi/imu", 1000);
+
+
+  ros::NodeHandle node;
+  ros::Subscriber sub = node.subscribe("fdi_imu", 100, &imuCallback);
+
+  // subscribe msg
+  // ros::NodeHandle can_node;
+  // ros::Subscriber can_sub = can_node.subscribe("Bicycle/CAN_Servo_info", 1000, &CAN_Callback);
+  // ros::NodeHandle motor_1_node;
+  // ros::Subscriber motor_1sub = motor_1_node.subscribe("Bicycle/VESC_Motor_1_info", 1000, &Motor_1_Callback);
+  // ros::NodeHandle motor_2_node;
+  // ros::Subscriber motor_2sub = motor_2_node.subscribe("Bicycle/VESC_Motor_2_info", 1000, &Motor_2_Callback);
+  ros::NodeHandle odrive_node;
+  ros::Subscriber odrive_sub = odrive_node.subscribe("Bicycle/Odrive_Motor_info", 1000, &Odrive_Motor_Callback);
+
+  ros::NodeHandle gamepad_control_node;
+  ros::Subscriber gamepad_control_sub = gamepad_control_node.subscribe("Bicycle/Gamepad_Control", 1000, &Gamepad_Control_callback);
+
+  // 方向控制
+  // subscribe srv
+  ros::NodeHandle service_a;
+  CAN_Servo_Client = service_a.serviceClient<can_communication::CAN_srv>("CAN_Servo");
+
+
+  #ifdef Odrive_USE_USB_Control
+    ros::NodeHandle odrive_node;
+    Odrive_pub = odrive_node.advertise<ros_odrive::odrive_ctrl>("/ros_odrive/odrive_ctrl_355E30753533", 1000);
+  #endif
+  #ifdef Odrive_USE_CAN_Control
+    ros::NodeHandle service_d;
+    Odrive_Motor_Client = service_d.serviceClient<can_communication::Odrive_srv>("Odrive_Motor");
+    while(!ros::service::exists("Odrive_Motor", false));
+  #endif
+  #ifdef VESC_USE_CAN_Control
+    // 动量轮
+    // ros::NodeHandle service_b;
+    // VESC_Motor_1_Client = service_b.serviceClient<can_communication::VESC_srv>("VESC_Motor_1");
+    ros::NodeHandle service_c;
+    VESC_Motor_2_Client = service_c.serviceClient<can_communication::VESC_srv>("VESC_Motor_2");
+  #endif
+  // 驱动轮
+
+
+  dynamic_reconfigure::Server<bicycle::LQRConfig> server;
+  dynamic_reconfigure::Server<bicycle::LQRConfig>::CallbackType f;
+  f = boost::bind(&callback, _1, _2);
+  server.setCallback(f);
+
+  ros::NodeHandle nh;
+  timer = nh.createTimer(ros::Duration(Time_Sec), timerCallback);
+  timer.stop();
+
+  ros::spin();
+  return 0;
+};

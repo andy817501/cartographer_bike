@@ -1,0 +1,11 @@
+moveit_setup_assistant_config:
+  URDF:
+    package: bicycle_urdf
+    relative_path: urdf/bicycle_urdf.urdf
+    xacro_args: ""
+  SRDF:
+    relative_path: config/bicycle_urdf.srdf
+  CONFIG:
+    author_name: prowinter
+    author_email: prowinter@aliyun.com
+    generated_timestamp: 1680399694

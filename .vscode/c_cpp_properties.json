@@ -1,0 +1,25 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/prowinter/Desktop/Bicycle_ws/devel/include/**",
+        "/opt/ros/noetic/include/**",
+        "/home/prowinter/Desktop/Bicycle_ws/src/bicycle_tf/include/**",
+        "/home/prowinter/Desktop/Bicycle_ws/src/imu_tools/imu_complementary_filter/include/**",
+        "/home/prowinter/Desktop/Bicycle_ws/src/imu_tools/imu_filter_madgwick/include/**",
+        "/home/prowinter/Desktop/Bicycle_ws/src/learning_tf2/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}
